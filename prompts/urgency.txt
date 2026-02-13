@@ -1,0 +1,4 @@
+# Urgency Agent Prompt
+
+Determine urgency level: low, medium, high.
+Return JSON with level and confidence.

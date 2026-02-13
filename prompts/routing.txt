@@ -1,0 +1,4 @@
+# Routing Agent Prompt
+
+Classify the ticket into a department.
+Return JSON with department and confidence.

@@ -1,0 +1,4 @@
+# Response Generation Prompt
+
+Generate a grounded support response.
+Use retrieved documents only.
