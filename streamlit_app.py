@@ -1,116 +1,184 @@
 import streamlit as st
 from datetime import datetime
 from agents.analyse_sentiment import detect_sentiment
-# Import de ton nouvel agent
-from agents.analyse_priorite import determine_priority 
+from agents.analyse_priorite import determine_priority
 
 # =========================================================
-# CONFIGURATION
+# CONFIG
 # =========================================================
 st.set_page_config(
-    page_title="Support Ticket Agent",
+    page_title="AI Support Ticket System",
     page_icon="🎫",
     layout="wide"
 )
 
 # =========================================================
-# AGENT ORCHESTRATION
+# STYLE MINIMALISTE PRO
 # =========================================================
-
-def analyze_ticket(raw_text):
-    """
-    Orchestre les agents d'analyse : Sentiment puis Priorité
-    """
-    # 1. Extraction du sentiment
-    sentiment = detect_sentiment(raw_text)
-    
-    # 2. Création de l'objet intermédiaire pour l'agent de priorité
-    analysis_obj = {"sentiment": sentiment}
-    
-    # 3. Calcul de la priorité en utilisant le texte ET le sentiment
-    priority_result = determine_priority(raw_text, analysis_obj)
-
-    
-    return {
-        "sentiment": sentiment,
-        "priority": priority_result[0], 
-        "confidence" :  priority_result[1], 
-        "department": "IT Support" # Placeholder pour le routing
-    }
-
-# ... (garder les fonctions retrieve_knowledge, generate_response, etc. telles quelles)
+st.markdown("""
+<style>
+.block-container {
+    padding-top: 2rem;
+    padding-bottom: 2rem;
+}
+.stTextArea textarea {
+    border-radius: 10px;
+    font-size: 15px;
+}
+.stTextInput input {
+    border-radius: 8px;
+}
+.stButton>button {
+    border-radius: 8px;
+    background-color: #4F46E5;
+    color: white;
+    font-weight: 600;
+    padding: 0.6em 1.2em;
+}
+.metric-card {
+    background-color: #F9FAFB;
+    padding: 18px;
+    border-radius: 12px;
+    text-align: center;
+}
+.pipeline-step {
+    text-align: center;
+    font-size: 14px;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # =========================================================
-# INITIALISATION SESSION
+# SESSION
 # =========================================================
 if "ticket_state" not in st.session_state:
     st.session_state.ticket_state = None
 
 # =========================================================
+# ORCHESTRATION
+# =========================================================
+def analyze_ticket(raw_text):
+    sentiment = detect_sentiment(raw_text)
+    analysis_obj = {"sentiment": sentiment}
+    priority, confidence = determine_priority(raw_text, analysis_obj)
+
+    return {
+        "sentiment": sentiment,
+        "priority": priority,
+        "confidence": confidence,
+        "department": "IT Support"
+    }
+
+# =========================================================
 # HEADER
 # =========================================================
-st.title("🎫 Multi-Agent Support Ticket System")
-st.caption("Pipeline: Sentiment Analysis -> Priority Scoring -> Routing")
+st.title("🎫 AI Multi-Agent Support System")
+st.caption("Structured Agent Pipeline with Controlled Decision Flow")
 st.divider()
 
 # =========================================================
-# SECTION 1 - INPUT TICKET
+# PIPELINE VISUELLE
 # =========================================================
-st.subheader("1️⃣ Submit a Ticket")
-ticket_text = st.text_area(
-    "Customer Message",
-    height=150,
-    placeholder="Describe your issue..."
-)
-client_id = st.text_input("Client ID (optional)")
-process = st.button("🚀 Process Ticket")
+st.markdown("### 🔎 Processing Pipeline")
 
-# =========================================================
-# PIPELINE ORCHESTRATION
-# =========================================================
-if process and ticket_text:
-    with st.spinner("Agents are analyzing your ticket..."):
-        # On lance l'analyse complète
-        analysis = analyze_ticket(ticket_text)
+col1, col2, col3 = st.columns(3)
 
-        st.session_state.ticket_state = {
-            "raw_text": ticket_text,
-            "analysis": analysis,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+with col1:
+    st.markdown("🧠 **Sentiment Analysis**")
+with col2:
+    st.markdown("⚡ **Priority Scoring**")
+with col3:
+    st.markdown("📂 **Routing**")
+
+st.progress(1.0)
+
+st.divider()
 
 # =========================================================
-# SECTION 2 - DISPLAY RESULTS
+# LAYOUT PRINCIPAL
 # =========================================================
-if st.session_state.ticket_state:
-    state = st.session_state.ticket_state
-    analysis = state["analysis"]
+left, right = st.columns([1.2, 1])
 
-    st.subheader("2️⃣ Analysis Results")
-    
-    # Affichage plus visuel sous forme de colonnes/badges
-    col_a, col_b, col_c = st.columns(3)
-    
-    with col_a:
-        st.metric("Detected Sentiment", analysis["sentiment"])
-    
-    with col_b:
-        # Couleur dynamique pour la priorité
-        color = "red" 
-        st.markdown(f"**Priority:** :{color}[{analysis['priority']}]")
-        
-    with col_c:
-        st.info(f"Department: {analysis['department']}")
+# =========================================================
+# INPUT PANEL
+# =========================================================
+with left:
+    st.subheader("Submit a Ticket")
 
-    with st.expander("View Raw JSON Data"):
-        st.json(state)
+    ticket_text = st.text_area(
+        "Customer Message",
+        height=200,
+        placeholder="Describe your issue..."
+    )
 
-    st.divider()
+    client_id = st.text_input("Client ID (optional)")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("👍 Helpful"):
-            st.success("Feedback recorded.")
-    with col2:
-        if st.button("👎 Not Helpful"):
-            st.error("Feedback recorded.")
+    process = st.button("🚀 Process Ticket", use_container_width=True)
+
+    if process and ticket_text:
+        with st.spinner("Analyzing ticket..."):
+            analysis = analyze_ticket(ticket_text)
+
+            st.session_state.ticket_state = {
+                "raw_text": ticket_text,
+                "analysis": analysis,
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+
+# =========================================================
+# RESULT PANEL
+# =========================================================
+with right:
+    st.subheader("Analysis Result")
+
+    if st.session_state.ticket_state:
+        state = st.session_state.ticket_state
+        analysis = state["analysis"]
+
+        sentiment_color = {
+            "positive": "🟢",
+            "neutral": "🟡",
+            "negative": "🔴"
+        }.get(analysis["sentiment"].lower(), "⚪")
+
+        priority_color = {
+            "low": "🟢",
+            "medium": "🟡",
+            "high": "🔴",
+            "critical": "🔥"
+        }.get(analysis["priority"].lower(), "⚪")
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>Sentiment</h4>
+            <p style="font-size:20px">{sentiment_color} {analysis['sentiment']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>Priority</h4>
+            <p style="font-size:20px">{priority_color} {analysis['priority']}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class="metric-card">
+            <h4>Confidence</h4>
+            <p style="font-size:20px">{round(analysis['confidence'],2)}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        st.info(f"📂 Routed to: {analysis['department']}")
+
+        with st.expander("Technical JSON Output"):
+            st.json(state)
+
+    else:
+        st.info("No ticket processed yet.")

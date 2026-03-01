@@ -15,9 +15,24 @@ def determine_priority(ticket_text, analysis_object):
     # Charger le nouveau template de priorité
     prompt_template = load_prompt('prompts/urgency.txt')
 
+    sentiment = analysis_object["sentiment"]
+    
     # Injection des deux variables : le texte ET le sentiment extrait précédemment
-    raw_result = session.sql(query).collect()[0][0].strip()
+    #raw_result = session.sql(query).collect()[0][0].strip()
+    formatted_prompt = prompt_template.format(
+        ticket_text=ticket_text,
+        sentiment=sentiment
+    )
 
+    query = f"""
+        SELECT SNOWFLAKE.CORTEX.COMPLETE(
+            'llama3-8b',
+            $$ {formatted_prompt} $$
+        )
+    """
+    result = session.sql(query).collect()
+    raw_result = result[0][0].strip()
+    
     # Découpage du résultat "HIGH | 0.95"
     if "|" in raw_result:
         parts = raw_result.split("|")
@@ -30,4 +45,4 @@ def determine_priority(ticket_text, analysis_object):
         priority = raw_result
         confidence = 0.0
         
-    return {"level": priority, "confidence": confidence}
+    return priority, confidence
