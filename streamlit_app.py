@@ -3,6 +3,9 @@ from datetime import datetime
 from agents.analyse_sentiment import detect_sentiment
 from agents.analyse_priorite import determine_priority
 
+# Naila — Import de l'agent de routage pour déterminer automatiquement le département
+from agents.routing import detect_department
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -75,9 +78,17 @@ def next_ticket_id():
 # =========================================================
 # LOGIC
 # =========================================================
+
+# Naila — Intégration du routage automatique dans l'analyse du ticket
 def analyze_ticket(raw_text):
     sentiment = detect_sentiment(raw_text)
     priority, confidence = determine_priority(raw_text, {"sentiment": sentiment})
+
+    # Naila — Appel de l'agent de routing pour déterminer le département
+    try:
+        department = detect_department(raw_text)
+    except Exception:
+        department = "General Inquiry"
 
     status = "Escalated" if str(priority).lower() in ["high", "critical"] else "Active"
 
@@ -93,7 +104,10 @@ def analyze_ticket(raw_text):
         "priority": priority,
         "confidence": float(confidence) if confidence is not None else 0.0,
         "status": status,
-        "department": "IT Support",
+
+        # Naila — Département détecté automatiquement par l'agent de routing
+        "department": department,
+
         "response": response,
         "feedback": None,
     }
