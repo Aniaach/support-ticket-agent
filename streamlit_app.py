@@ -80,6 +80,7 @@ def next_ticket_id():
 # LOGIC
 # =========================================================
 def analyze_ticket(raw_text):
+    """
     sentiment = detect_sentiment(raw_text)
     priority, confidence = determine_priority(raw_text, {"sentiment": sentiment})
 
@@ -112,7 +113,7 @@ def analyze_ticket(raw_text):
                             
 
     return {
-        "sentiment": sentiment,
+        """"sentiment": sentiment,
         "priority": priority,
         "confidence": float(confidence) if confidence is not None else 0.0,
         "status": status,
@@ -122,6 +123,11 @@ def analyze_ticket(raw_text):
 
         "response": response,
         "feedback": None,
+        """
+        "cleaned" : cleaned, 
+        "embedding" : embedding,
+        "top5": results
+        
     }
 
 def get_selected_ticket():
@@ -136,7 +142,7 @@ def get_selected_ticket():
 # =========================================================
 # HEADER
 # =========================================================
-st.title("AI Multi-Agent Support System")
+st.title("AI Multi-Agent Support System Celina3")
 st.caption("Structured Ticket Processing Workflow")
 st.divider()
 
