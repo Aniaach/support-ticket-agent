@@ -7,10 +7,6 @@ from agents.analyse_priorite import determine_priority
 from agents.routing import detect_department
 from agents.response import generate_response
 from agents.top5_context import get_top5_context
-from agents.cleaning import create_embedding, clean_text, search_top5
-from snowflake.snowpark.context import get_active_session
-
-conn = get_active_session()
 # =========================================================
 # CONFIG
 # =========================================================
@@ -113,13 +109,8 @@ def analyze_ticket(raw_text):
     sentiment=sentiment,
     top_k_lines=top5_context
     )                                
-    """
-    cleaned = clean_text(raw_text)
 
-    embedding = create_embedding(conn, cleaned)
-
-    results = search_top5(conn, embedding, "IT Support")
-                
+                            
 
     return {
         """"sentiment": sentiment,
