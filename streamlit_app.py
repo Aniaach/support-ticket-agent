@@ -3,6 +3,10 @@ from datetime import datetime
 from agents.analyse_sentiment import detect_sentiment
 from agents.analyse_priorite import determine_priority
 
+# Naila — Import de l'agent de routage (département)
+from agents.routing import detect_department
+from agents.response import generate_response
+from agents.top5_context import get_top5_context
 # =========================================================
 # CONFIG
 # =========================================================
@@ -79,21 +83,43 @@ def analyze_ticket(raw_text):
     sentiment = detect_sentiment(raw_text)
     priority, confidence = determine_priority(raw_text, {"sentiment": sentiment})
 
+    # Naila — Appel à l'agent de routing pour déterminer le département
+    try:
+        department = detect_department(raw_text)
+    except Exception:
+        department = "General Inquiry"
+
     status = "Escalated" if str(priority).lower() in ["high", "critical"] else "Active"
 
-    response = (
-        "Thank you for contacting support.\n\n"
-        "We have received your request and started the analysis.\n"
-        "If we need additional information, we will get back to you.\n\n"
-        "Best regards,\nSupport Team"
-    )
+    # response = (
+    #     "Thank you for contacting support.\n\n"
+    #     "We have received your request and started the analysis.\n"
+    #     "If we need additional information, we will get back to you.\n\n"
+    #     "Best regards,\nSupport Team"
+    # )
+    
+    # Naila — Génération du Top 5 de contexte selon le département
+    top5_context = get_top5_context(department)
+    
+    # Naila — Génération de la réponse par l'agent LLM
+    response = generate_response(
+    ticket_text=raw_text,
+    department=department,
+    sentiment=sentiment,
+    top_k_lines=top5_context
+    )                                
+
+                            
 
     return {
         "sentiment": sentiment,
         "priority": priority,
         "confidence": float(confidence) if confidence is not None else 0.0,
         "status": status,
-        "department": "IT Support",
+
+        # Naila — Département déterminé automatiquement
+        "department": department,
+
         "response": response,
         "feedback": None,
     }
