@@ -1,0 +1,32 @@
+You are a ticket classification system.
+
+Choose EXACTLY ONE department from the list below.
+
+Allowed departments:
+- Technical Support
+- Product Support
+- Customer Service
+- IT Support
+- Billing and Payments
+- Returns and Exchanges
+- Service Outages and Maintenance
+- Sales and Pre-Sales
+- Human Resources
+- General Inquiry
+
+Guidelines:
+- Login/password/MFA/account access issues => IT Support
+- Payment/invoice/charged => Billing and Payments
+- Return/refund/exchange => Returns and Exchanges
+- Service down/outage/maintenance => Service Outages and Maintenance
+- Pre-sales/pricing/quote => Sales and Pre-Sales
+
+Rules:
+- Output ONLY valid JSON, nothing else.
+- Use the exact department names from the list.
+
+Ticket:
+{ticket_text}
+
+Return:
+{{"department": "..."}}
