@@ -1,5 +1,4 @@
 import streamlit as st
-from datetime import datetime
 import time
 
 from agents.analyse_sentiment import detect_sentiment
@@ -7,6 +6,10 @@ from agents.analyse_priorite import determine_priority
 from agents.routing import detect_department
 from agents.response import generate_response
 from agents.top5_context import get_top5_context
+
+from snowflake.snowpark.context import get_active_session
+
+session = get_active_session()
 
 # =========================================================
 # CONFIG
@@ -144,9 +147,6 @@ st.markdown("""
 # =========================================================
 # SESSION STATE INIT
 # =========================================================
-if "tickets" not in st.session_state:
-    st.session_state.tickets = []
-
 if "selected_ticket_id" not in st.session_state:
     st.session_state.selected_ticket_id = None
 
@@ -156,35 +156,11 @@ if "role" not in st.session_state:
 # =========================================================
 # HELPERS
 # =========================================================
-def normalize_tickets():
-    next_id = 1
-    for t in st.session_state.tickets:
-        if not isinstance(t, dict):
-            continue
-        if "id" not in t:
-            t["id"] = next_id
-        if "status" not in t:
-            t["status"] = "Active"
-        if "feedback" not in t:
-            t["feedback"] = None
-        next_id = max(next_id, int(t.get("id", 0)) + 1)
+def sql_escape(value):
+    if value is None:
+        return ""
+    return str(value).replace("'", "''")
 
-normalize_tickets()
-
-def next_ticket_id():
-    if not st.session_state.tickets:
-        return 1
-    valid_ids = [int(t.get("id", 0)) for t in st.session_state.tickets if isinstance(t, dict)]
-    return max(valid_ids) + 1 if valid_ids else 1
-
-def get_selected_ticket():
-    tid = st.session_state.selected_ticket_id
-    if tid is None:
-        return None
-    for t in st.session_state.tickets:
-        if isinstance(t, dict) and int(t.get("id", -1)) == int(tid):
-            return t
-    return None
 
 def get_status_badge_class(status):
     s = str(status).lower()
@@ -194,15 +170,17 @@ def get_status_badge_class(status):
         return "closed"
     return "active"
 
+
 def get_priority_class(priority):
     p = str(priority).lower()
-    if p in ["critical"]:
+    if p == "critical":
         return "critical"
-    if p in ["high"]:
+    if p == "high":
         return "high"
     if p in ["medium", "moderate"]:
         return "medium"
     return "low"
+
 
 def priority_icon(priority):
     p = str(priority).lower()
@@ -213,6 +191,7 @@ def priority_icon(priority):
     if p in ["medium", "moderate"]:
         return "🟡"
     return "🟢"
+
 
 def render_pipeline(active_index=-1, completed_until=-1, container=None):
     steps = [
@@ -242,8 +221,14 @@ def render_pipeline(active_index=-1, completed_until=-1, container=None):
     else:
         st.markdown(html, unsafe_allow_html=True)
 
+
 def display_agent_log(message, container):
     container.markdown(f'<div class="agent-log">{message}</div>', unsafe_allow_html=True)
+
+
+def render_static_completed_pipeline():
+    render_pipeline(active_index=-1, completed_until=5)
+
 
 def run_pipeline_simulation(raw_text, animate=True):
     pipeline_placeholder = st.empty()
@@ -287,7 +272,7 @@ def run_pipeline_simulation(raw_text, animate=True):
         ticket_text=raw_text,
         department=department,
         sentiment=sentiment,
-        top_k_lines=top5_context
+        #top_k_lines=top5_context
     )
     if animate:
         time.sleep(0.45)
@@ -316,8 +301,154 @@ def run_pipeline_simulation(raw_text, animate=True):
         ]
     }
 
-def render_static_completed_pipeline():
-    render_pipeline(active_index=-1, completed_until=5)
+def normalize_record_keys(record):
+    return {str(k).lower(): v for k, v in record.items()}
+    
+# =========================================================
+# DATABASE FUNCTIONS
+# =========================================================
+def get_all_tickets():
+    df = session.sql("""
+        SELECT *
+        FROM support_tickets
+        ORDER BY created_at DESC
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    records = df.to_dict("records")
+    return [normalize_record_keys(r) for r in records]
+
+
+def get_selected_ticket():
+    tid = st.session_state.get("selected_ticket_id")
+
+    if tid is None:
+        return None
+
+    try:
+        tid = int(tid)
+    except Exception:
+        return None
+
+    df = session.sql(f"""
+        SELECT *
+        FROM support_tickets
+        WHERE ticket_id = {tid}
+        LIMIT 1
+    """).to_pandas()
+
+    if df.empty:
+        return None
+
+    record = df.to_dict("records")[0]
+    return normalize_record_keys(record)
+
+
+def get_next_ticket_id():
+    result = session.sql("""
+        SELECT COALESCE(MAX(ticket_id), 0) + 1 AS NEXT_ID
+        FROM support_tickets
+    """).collect()
+
+    return int(result[0]["NEXT_ID"])
+
+
+def insert_ticket(ticket):
+    client_id = sql_escape(ticket["client_id"])
+    sentiment = sql_escape(ticket["sentiment"])
+    priority = sql_escape(ticket["priority"])
+    department = sql_escape(ticket["department"])
+    status = sql_escape(ticket["status"])
+    feedback_sql = "NULL" if ticket["feedback"] is None else f"'{sql_escape(ticket['feedback'])}'"
+
+    session.sql(f"""
+        INSERT INTO support_tickets (
+            ticket_id,
+            client_id,
+            ticket_text,
+            sentiment,
+            priority,
+            confidence,
+            department,
+            generated_response,
+            status,
+            feedback,
+            quality_score,
+            safe_to_send,
+            retry_count,
+            created_at
+        )
+        VALUES (
+            {ticket["ticket_id"]},
+            '{client_id}',
+            $$ {ticket["ticket_text"]} $$,
+            '{sentiment}',
+            '{priority}',
+            {ticket["confidence"]},
+            '{department}',
+            $$ {ticket["generated_response"]} $$,
+            '{status}',
+            {feedback_sql},
+            {ticket["quality_score"]},
+            {str(ticket["safe_to_send"]).upper()},
+            {ticket["retry_count"]},
+            CURRENT_TIMESTAMP()
+        )
+    """).collect()
+
+
+def insert_monitoring(ticket):
+    sentiment = sql_escape(ticket["sentiment"])
+    priority = sql_escape(ticket["priority"])
+    department = sql_escape(ticket["department"])
+    status = sql_escape(ticket["status"])
+
+    session.sql(f"""
+        INSERT INTO agent_monitoring (
+            ticket_id,
+            sentiment,
+            priority,
+            department,
+            quality_score,
+            safe_to_send,
+            retry_count,
+            final_status,
+            created_at
+        )
+        VALUES (
+            {ticket["ticket_id"]},
+            '{sentiment}',
+            '{priority}',
+            '{department}',
+            {ticket["quality_score"]},
+            {str(ticket["safe_to_send"]).upper()},
+            {ticket["retry_count"]},
+            '{status}',
+            CURRENT_TIMESTAMP()
+        )
+    """).collect()
+
+
+def update_ticket_status(ticket_id, status):
+    safe_status = sql_escape(status)
+
+    session.sql(f"""
+        UPDATE support_tickets
+        SET status = '{safe_status}'
+        WHERE ticket_id = {int(ticket_id)}
+    """).collect()
+
+
+def update_ticket_feedback(ticket_id, feedback):
+    safe_feedback = sql_escape(feedback)
+
+    session.sql(f"""
+        UPDATE support_tickets
+        SET feedback = '{safe_feedback}'
+        WHERE ticket_id = {int(ticket_id)}
+    """).collect()
 
 # =========================================================
 # HEADER
@@ -337,15 +468,19 @@ st.divider()
 # =========================================================
 # DASHBOARD
 # =========================================================
-tickets = [t for t in st.session_state.tickets if isinstance(t, dict)]
+tickets = get_all_tickets()
+
+if not tickets:
+    st.session_state.selected_ticket_id = None
 
 total_tickets = len(tickets)
-active_tickets = sum(1 for t in tickets if t.get("status") == "Active")
-escalated_tickets = sum(1 for t in tickets if t.get("status") == "Escalated")
-closed_tickets = sum(1 for t in tickets if t.get("status") == "Closed")
-positive_feedback = sum(1 for t in tickets if t.get("feedback") == "positive")
+active_tickets = sum(1 for t in tickets if str(t.get("status")) == "Active")
+escalated_tickets = sum(1 for t in tickets if str(t.get("status")) == "Escalated")
+closed_tickets = sum(1 for t in tickets if str(t.get("status")) == "Closed")
+positive_feedback = sum(1 for t in tickets if str(t.get("feedback")) == "positive")
 
 k1, k2, k3, k4, k5 = st.columns(5)
+
 with k1:
     st.markdown(f"""
     <div class="kpi">
@@ -353,6 +488,7 @@ with k1:
         <div class="value">{total_tickets}</div>
     </div>
     """, unsafe_allow_html=True)
+
 with k2:
     st.markdown(f"""
     <div class="kpi">
@@ -360,6 +496,7 @@ with k2:
         <div class="value">{active_tickets}</div>
     </div>
     """, unsafe_allow_html=True)
+
 with k3:
     st.markdown(f"""
     <div class="kpi">
@@ -367,6 +504,7 @@ with k3:
         <div class="value">{escalated_tickets}</div>
     </div>
     """, unsafe_allow_html=True)
+
 with k4:
     st.markdown(f"""
     <div class="kpi">
@@ -374,6 +512,7 @@ with k4:
         <div class="value">{closed_tickets}</div>
     </div>
     """, unsafe_allow_html=True)
+
 with k5:
     st.markdown(f"""
     <div class="kpi">
@@ -395,13 +534,14 @@ left, right = st.columns([1, 2], gap="large")
 with left:
     if role == "Customer":
         st.subheader("Create Ticket")
+
         ticket_text = st.text_area(
             "Message",
             height=140,
             placeholder="Describe your issue..."
         )
-        client_id = st.text_input("Client ID", placeholder="e.g. C12345")
 
+        client_id = st.text_input("Client ID", placeholder="e.g. C12345")
         animate_pipeline = st.checkbox("Animate multi-agent pipeline", value=True)
 
         if st.button("Submit Ticket", use_container_width=True):
@@ -409,55 +549,68 @@ with left:
                 with st.spinner("Processing ticket..."):
                     result = run_pipeline_simulation(ticket_text, animate=animate_pipeline)
 
+                ticket_id = get_next_ticket_id()
+
                 ticket_data = {
-                    "id": next_ticket_id(),
+                    "ticket_id": ticket_id,
                     "client_id": client_id.strip(),
-                    "text": ticket_text.strip(),
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    **result
+                    "ticket_text": ticket_text.strip(),
+                    "sentiment": result["sentiment"],
+                    "priority": result["priority"],
+                    "confidence": result["confidence"],
+                    "department": result["department"],
+                    "generated_response": result["response"],
+                    "status": result["status"],
+                    "feedback": None,
+                    "quality_score": 0.95,
+                    "safe_to_send": True,
+                    "retry_count": 0
                 }
 
-                st.session_state.tickets.append(ticket_data)
-                st.session_state.selected_ticket_id = ticket_data["id"]
+                insert_ticket(ticket_data)
+                insert_monitoring(ticket_data)
+
+                st.session_state.selected_ticket_id = ticket_id
                 st.success("Ticket created successfully.")
+                st.rerun()
             else:
                 st.warning("Please enter a message before submitting.")
 
     else:
         st.subheader("Support Controls")
+
         status_filter = st.selectbox(
             "Filter by status",
             ["All", "Active", "Escalated", "Closed"]
         )
+
         priority_filter = st.selectbox(
             "Filter by priority",
             ["All", "Low", "Medium", "High", "Critical"]
         )
+
         search_term = st.text_input("Search by keyword / client ID")
 
     st.divider()
     st.subheader("Ticket History")
 
+    filtered_tickets = []
+
     if role == "Customer":
         customer_search = st.text_input("Search my tickets")
         customer_client_filter = st.text_input("Filter by my Client ID")
-        filtered_tickets = []
 
-        for t in reversed(st.session_state.tickets):
-            if not isinstance(t, dict):
+        for t in tickets:
+            if customer_search and customer_search.lower() not in str(t.get("ticket_text", "")).lower():
                 continue
-            if customer_search and customer_search.lower() not in str(t.get("text", "")).lower():
-                continue
+
             if customer_client_filter and customer_client_filter.lower() not in str(t.get("client_id", "")).lower():
                 continue
+
             filtered_tickets.append(t)
+
     else:
-        filtered_tickets = []
-
-        for t in reversed(st.session_state.tickets):
-            if not isinstance(t, dict):
-                continue
-
+        for t in tickets:
             if status_filter != "All" and str(t.get("status")) != status_filter:
                 continue
 
@@ -465,7 +618,7 @@ with left:
                 continue
 
             if search_term:
-                haystack = f"{t.get('text','')} {t.get('client_id','')} {t.get('department','')}".lower()
+                haystack = f"{t.get('ticket_text','')} {t.get('client_id','')} {t.get('department','')}".lower()
                 if search_term.lower() not in haystack:
                     continue
 
@@ -475,14 +628,14 @@ with left:
         st.caption("No matching tickets.")
     else:
         for t in filtered_tickets:
-            tid = t.get("id", "?")
+            tid = t.get("ticket_id", "?")
             prio = t.get("priority", "N/A")
             status = t.get("status", "N/A")
-            ts = t.get("timestamp", "")
+            ts = str(t.get("created_at", ""))[:16]
             icon = priority_icon(prio)
 
             label = f"#{tid} {icon} {prio} • {status}"
-            if ts:
+            if ts and ts != "None":
                 label += f" • {ts}"
 
             if st.button(label, key=f"hist_{tid}", use_container_width=True):
@@ -497,35 +650,37 @@ with right:
     if not ticket:
         st.info("Select a ticket from the history to view details.")
     else:
-        st.subheader(f"Ticket #{ticket.get('id')} Details")
+        st.subheader(f"Ticket #{ticket.get('ticket_id')} Details")
 
         status = ticket.get("status", "Active")
         badge_class = get_status_badge_class(status)
         prio_class = get_priority_class(ticket.get("priority", "Low"))
 
         top_row_1, top_row_2 = st.columns([2, 1])
+
         with top_row_1:
             st.markdown(
                 f'<span class="badge {badge_class}">{status}</span>'
                 f'<span class="pill {prio_class}">{ticket.get("priority","N/A")}</span>',
                 unsafe_allow_html=True
             )
+
             st.caption(
                 f"Department: {ticket.get('department','N/A')} • "
                 f"Client: {ticket.get('client_id') or '—'} • "
-                f"Created: {ticket.get('timestamp','—')}"
+                f"Created: {str(ticket.get('created_at','—'))[:16]}"
             )
 
         with top_row_2:
             if role == "Support Agent":
                 if status != "Closed":
                     if st.button("Close Ticket", use_container_width=True):
-                        ticket["status"] = "Closed"
+                        update_ticket_status(ticket["ticket_id"], "Closed")
                         st.success("Ticket closed.")
                         st.rerun()
                 else:
                     if st.button("Reopen Ticket", use_container_width=True):
-                        ticket["status"] = "Active"
+                        update_ticket_status(ticket["ticket_id"], "Active")
                         st.success("Ticket reopened.")
                         st.rerun()
 
@@ -561,6 +716,7 @@ with right:
                 conf = round(float(conf), 2)
             except Exception:
                 conf = 0.0
+
             st.markdown(f"""
             <div class="kpi">
               <div class="label">CONFIDENCE</div>
@@ -578,34 +734,32 @@ with right:
 
         st.markdown("### Original Message")
         st.markdown(
-            f'<div class="card" style="white-space:pre-line;">{ticket.get("text","")}</div>',
+            f'<div class="card" style="white-space:pre-line;">{ticket.get("ticket_text","")}</div>',
             unsafe_allow_html=True
         )
 
         st.markdown("### Generated Response")
         st.markdown(
-            f'<div class="card" style="white-space:pre-line;">{ticket.get("response","")}</div>',
+            f'<div class="card" style="white-space:pre-line;">{ticket.get("generated_response","")}</div>',
             unsafe_allow_html=True
         )
 
         st.markdown("### Knowledge Context Used")
-        top5 = ticket.get("top5_context", [])
-        if top5:
-            for i, line in enumerate(top5, 1):
-                st.write(f"{i}. {line}")
-        else:
-            st.caption("No context available.")
+        st.caption("Context lines are used during generation but are not stored in support_tickets.")
 
         if role == "Customer":
             st.markdown("### Was this response helpful?")
             fb1, fb2 = st.columns(2)
 
             with fb1:
-                if st.button("👍 Helpful", key=f"fb_yes_{ticket['id']}"):
-                    ticket["feedback"] = "positive"
+                if st.button("👍 Helpful", key=f"fb_yes_{ticket['ticket_id']}"):
+                    update_ticket_feedback(ticket["ticket_id"], "positive")
+                    st.rerun()
+
             with fb2:
-                if st.button("👎 Not helpful", key=f"fb_no_{ticket['id']}"):
-                    ticket["feedback"] = "negative"
+                if st.button("👎 Not helpful", key=f"fb_no_{ticket['ticket_id']}"):
+                    update_ticket_feedback(ticket["ticket_id"], "negative")
+                    st.rerun()
 
             if ticket.get("feedback"):
                 st.success(f"Feedback recorded: {ticket['feedback']}")
@@ -615,20 +769,21 @@ with right:
 
             with a1:
                 if ticket.get("status") == "Active":
-                    if st.button("Escalate Ticket", key=f"esc_{ticket['id']}", use_container_width=True):
-                        ticket["status"] = "Escalated"
+                    if st.button("Escalate Ticket", key=f"esc_{ticket['ticket_id']}", use_container_width=True):
+                        update_ticket_status(ticket["ticket_id"], "Escalated")
                         st.success("Ticket escalated.")
                         st.rerun()
+
                 elif ticket.get("status") == "Escalated":
-                    if st.button("Set Back to Active", key=f"act_{ticket['id']}", use_container_width=True):
-                        ticket["status"] = "Active"
+                    if st.button("Set Back to Active", key=f"act_{ticket['ticket_id']}", use_container_width=True):
+                        update_ticket_status(ticket["ticket_id"], "Active")
                         st.success("Ticket set back to active.")
                         st.rerun()
 
             with a2:
                 if ticket.get("status") != "Closed":
-                    if st.button("Close from Support", key=f"close_support_{ticket['id']}", use_container_width=True):
-                        ticket["status"] = "Closed"
+                    if st.button("Close from Support", key=f"close_support_{ticket['ticket_id']}", use_container_width=True):
+                        update_ticket_status(ticket["ticket_id"], "Closed")
                         st.success("Ticket closed by support.")
                         st.rerun()
 
