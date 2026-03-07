@@ -153,3 +153,24 @@ def update_ticket_feedback(ticket_id, feedback):
         SET feedback = '{safe_feedback}'
         WHERE ticket_id = {int(ticket_id)}
     """).collect()
+
+
+def get_tickets_by_client(client_id):
+
+    if not client_id:
+        return []
+
+    safe_client = sql_escape(client_id)
+
+    df = session.sql(f"""
+        SELECT *
+        FROM support_tickets
+        WHERE client_id = '{safe_client}'
+        ORDER BY created_at DESC
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    records = df.to_dict("records")
+    return [normalize_record_keys(r) for r in records]

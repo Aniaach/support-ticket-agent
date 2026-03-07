@@ -9,6 +9,7 @@ from database import (
     insert_monitoring,
     update_ticket_status,
     update_ticket_feedback,
+    get_tickets_by_client
 )
 from pipeline import run_pipeline_simulation, render_static_completed_pipeline
 
@@ -94,7 +95,12 @@ if st.session_state.last_evaluation_debug is not None:
 # =========================================================
 # DASHBOARD
 # =========================================================
-tickets = get_all_tickets()
+#tickets = get_all_tickets()
+if role == "Customer":
+    client_id = st.session_state.get("client_id")
+    tickets = get_tickets_by_client(client_id)
+else:
+    tickets = get_all_tickets()
 
 if not tickets:
     st.session_state.selected_ticket_id = None
@@ -161,13 +167,22 @@ with left:
     if role == "Customer":
         st.subheader("Create Ticket")
 
+        # ticket_text = st.text_area(
+        #     "Message",
+        #     height=140,
+        #     placeholder="Describe your issue..."
+        # )
+
+        # client_id = st.text_input("Client ID", placeholder="e.g. C12345")
+        client_id = st.text_input("Client ID", placeholder="Enter your client ID. e.g. C12345")
+        st.session_state.client_id = client_id
+        
         ticket_text = st.text_area(
             "Message",
             height=140,
             placeholder="Describe your issue..."
         )
-
-        client_id = st.text_input("Client ID", placeholder="e.g. C12345")
+        
         animate_pipeline = st.checkbox("Animate multi-agent pipeline", value=True)
         show_debug = st.checkbox("Show evaluation debug", value=True)
 
@@ -322,8 +337,9 @@ with right:
             unsafe_allow_html=True
         )
 
-        st.markdown("### Analysis")
-        c1, c2, c3, c4 = st.columns(4)
+        if role == "Support Agent":
+            st.markdown("### Analysis")
+            c1, c2, c3, c4 = st.columns(4)
 
         with c1:
             st.markdown(f"""
