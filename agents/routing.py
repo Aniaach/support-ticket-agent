@@ -32,11 +32,23 @@ def extract_json(text):
             raise ValueError(f"Aucun JSON valide trouvé dans la sortie : {text}")
         return json.loads(match.group(0))
 
-def detect_department(ticket_text):
+def detect_department(ticket_text, correction=None): 
     session = get_active_session()
-
     prompt_template = load_prompt("prompts/routing.txt")
     formatted_prompt = prompt_template.format(ticket_text=ticket_text)
+    # Ajout de correction si l'agent d'évaluation a détecté une erreur
+    if correction:
+        formatted_prompt += f"""
+### CORRECTION FROM EVALUATION AGENT ###
+
+The previous department classification was incorrect.
+
+Reason:
+{correction}
+
+Select the correct department for this ticket.
+Avoid repeating the previous mistake.
+"""
 
     query = f"""
         SELECT SNOWFLAKE.CORTEX.COMPLETE(

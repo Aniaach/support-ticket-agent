@@ -1,148 +1,22 @@
 import streamlit as st
-import time
 
-from agents.analyse_sentiment import detect_sentiment
-from agents.analyse_priorite import determine_priority
-from agents.routing import detect_department
-from agents.response import generate_response
-from agents.top5_context import get_top5_context
-
-from snowflake.snowpark.context import get_active_session
-
-session = get_active_session()
+from styles import apply_styles
+from database import (
+    get_all_tickets,
+    get_selected_ticket,
+    get_next_ticket_id,
+    insert_ticket,
+    insert_monitoring,
+    update_ticket_status,
+    update_ticket_feedback,
+)
+from pipeline import run_pipeline_simulation, render_static_completed_pipeline
 
 # =========================================================
 # CONFIG
 # =========================================================
 st.set_page_config(page_title="AI Support System", layout="wide")
-
-# =========================================================
-# STYLE
-# =========================================================
-st.markdown("""
-<style>
-.block-container { padding-top: 1.5rem; max-width: 1280px; }
-
-/* Pipeline */
-.pipeline-wrap {
-    display:flex;
-    align-items:center;
-    justify-content:center;
-    gap:10px;
-    flex-wrap:wrap;
-    margin: 10px 0 8px 0;
-}
-.pipeline-step {
-    padding:10px 16px;
-    border-radius:12px;
-    font-size:13px;
-    font-weight:700;
-    border:1px solid #E5E7EB;
-    background:#F3F4F6;
-    color:#374151;
-    min-width:120px;
-    text-align:center;
-}
-.pipeline-step.done {
-    background:#DCFCE7;
-    color:#166534;
-    border:1px solid #86EFAC;
-    box-shadow:0 0 0 1px rgba(34,197,94,.05);
-}
-.pipeline-step.active {
-    background:#DBEAFE;
-    color:#1D4ED8;
-    border:1px solid #93C5FD;
-    animation:pulse 1s infinite;
-}
-.pipeline-arrow {
-    color:#9CA3AF;
-    font-weight:900;
-    font-size:18px;
-}
-
-@keyframes pulse {
-  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59,130,246,.30); }
-  70% { transform: scale(1.02); box-shadow: 0 0 0 10px rgba(59,130,246,0); }
-  100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(59,130,246,0); }
-}
-
-/* Cards */
-.card {
-    border:1px solid #E5E7EB;
-    background:white;
-    border-radius:14px;
-    padding:16px;
-}
-.kpi {
-    border:1px solid #E5E7EB;
-    background:#F9FAFB;
-    border-radius:14px;
-    padding:14px;
-    text-align:center;
-}
-.kpi .label {
-    font-size:12px;
-    color:#6B7280;
-    font-weight:700;
-    letter-spacing:.02em;
-}
-.kpi .value {
-    margin-top:6px;
-    font-size:20px;
-    font-weight:800;
-    color:#111827;
-}
-
-/* Badge status */
-.badge {
-    display:inline-block;
-    padding:6px 12px;
-    border-radius:999px;
-    font-size:12px;
-    font-weight:700;
-}
-.badge.active { background:#DBEAFE; color:#1D4ED8; }
-.badge.escalated { background:#FEE2E2; color:#B91C1C; }
-.badge.closed { background:#D1FAE5; color:#065F46; }
-
-/* Priority pill */
-.pill {
-    display:inline-block;
-    padding:4px 10px;
-    border-radius:999px;
-    font-size:12px;
-    font-weight:700;
-    margin-left:6px;
-}
-.pill.low { background:#DCFCE7; color:#166534; }
-.pill.medium { background:#FEF3C7; color:#92400E; }
-.pill.high { background:#FEE2E2; color:#B91C1C; }
-.pill.critical { background:#E9D5FF; color:#6B21A8; }
-
-/* Agent log */
-.agent-log {
-    border:1px dashed #D1D5DB;
-    background:#FAFAFA;
-    border-radius:12px;
-    padding:12px 14px;
-    font-size:13px;
-    color:#374151;
-}
-
-/* Buttons */
-.stButton > button {
-    border-radius:10px;
-    font-weight:650;
-}
-
-/* Small muted text block */
-.muted {
-    color:#6B7280;
-    font-size:13px;
-}
-</style>
-""", unsafe_allow_html=True)
+apply_styles()
 
 # =========================================================
 # SESSION STATE INIT
@@ -153,15 +27,15 @@ if "selected_ticket_id" not in st.session_state:
 if "role" not in st.session_state:
     st.session_state.role = "Customer"
 
-# =========================================================
-# HELPERS
-# =========================================================
-def sql_escape(value):
-    if value is None:
-        return ""
-    return str(value).replace("'", "''")
+if "last_evaluation_debug" not in st.session_state:
+    st.session_state.last_evaluation_debug = None
 
+if "last_pipeline_result" not in st.session_state:
+    st.session_state.last_pipeline_result = None
 
+# =========================================================
+# UI HELPERS
+# =========================================================
 def get_status_badge_class(status):
     s = str(status).lower()
     if s == "escalated":
@@ -192,264 +66,6 @@ def priority_icon(priority):
         return "🟡"
     return "🟢"
 
-
-def render_pipeline(active_index=-1, completed_until=-1, container=None):
-    steps = [
-        "Ticket",
-        "Sentiment Agent",
-        "Priority Agent",
-        "Routing Agent",
-        "RAG Agent",
-        "Response Agent"
-    ]
-
-    html = '<div class="pipeline-wrap">'
-    for i, step in enumerate(steps):
-        cls = "pipeline-step"
-        if i <= completed_until:
-            cls += " done"
-        elif i == active_index:
-            cls += " active"
-
-        html += f'<div class="{cls}">{step}</div>'
-        if i < len(steps) - 1:
-            html += '<div class="pipeline-arrow">→</div>'
-    html += "</div>"
-
-    if container is not None:
-        container.markdown(html, unsafe_allow_html=True)
-    else:
-        st.markdown(html, unsafe_allow_html=True)
-
-
-def display_agent_log(message, container):
-    container.markdown(f'<div class="agent-log">{message}</div>', unsafe_allow_html=True)
-
-
-def render_static_completed_pipeline():
-    render_pipeline(active_index=-1, completed_until=5)
-
-
-def run_pipeline_simulation(raw_text, animate=True):
-    pipeline_placeholder = st.empty()
-    log_placeholder = st.empty()
-
-    render_pipeline(active_index=0, completed_until=-1, container=pipeline_placeholder)
-    display_agent_log("🎫 Ticket received.", log_placeholder)
-    if animate:
-        time.sleep(0.35)
-
-    render_pipeline(active_index=1, completed_until=0, container=pipeline_placeholder)
-    display_agent_log("😊 Sentiment Agent analysing ticket tone...", log_placeholder)
-    sentiment = detect_sentiment(raw_text)
-    if animate:
-        time.sleep(0.45)
-
-    render_pipeline(active_index=2, completed_until=1, container=pipeline_placeholder)
-    display_agent_log("⚡ Priority Agent calculating urgency level...", log_placeholder)
-    priority, confidence = determine_priority(raw_text, {"sentiment": sentiment})
-    if animate:
-        time.sleep(0.45)
-
-    render_pipeline(active_index=3, completed_until=2, container=pipeline_placeholder)
-    display_agent_log("🧭 Routing Agent identifying target department...", log_placeholder)
-    try:
-        department = detect_department(raw_text)
-    except Exception:
-        department = "General Inquiry"
-    if animate:
-        time.sleep(0.45)
-
-    render_pipeline(active_index=4, completed_until=3, container=pipeline_placeholder)
-    display_agent_log("📚 RAG Agent retrieving the most relevant context...", log_placeholder)
-    top5_context = get_top5_context(department)
-    if animate:
-        time.sleep(0.45)
-
-    render_pipeline(active_index=5, completed_until=4, container=pipeline_placeholder)
-    display_agent_log("✍️ Response Agent generating a draft answer...", log_placeholder)
-    response = generate_response(
-        ticket_text=raw_text,
-        department=department,
-        sentiment=sentiment,
-        #top_k_lines=top5_context
-    )
-    if animate:
-        time.sleep(0.45)
-
-    render_pipeline(active_index=-1, completed_until=5, container=pipeline_placeholder)
-    display_agent_log("✅ Multi-agent workflow completed.", log_placeholder)
-
-    status = "Escalated" if str(priority).lower() in ["high", "critical"] else "Active"
-
-    return {
-        "sentiment": sentiment,
-        "priority": priority,
-        "confidence": float(confidence) if confidence is not None else 0.0,
-        "status": status,
-        "department": department,
-        "response": response,
-        "top5_context": top5_context,
-        "feedback": None,
-        "last_pipeline_steps": [
-            "Ticket",
-            "Sentiment Agent",
-            "Priority Agent",
-            "Routing Agent",
-            "RAG Agent",
-            "Response Agent"
-        ]
-    }
-
-def normalize_record_keys(record):
-    return {str(k).lower(): v for k, v in record.items()}
-    
-# =========================================================
-# DATABASE FUNCTIONS
-# =========================================================
-def get_all_tickets():
-    df = session.sql("""
-        SELECT *
-        FROM support_tickets
-        ORDER BY created_at DESC
-    """).to_pandas()
-
-    if df.empty:
-        return []
-
-    records = df.to_dict("records")
-    return [normalize_record_keys(r) for r in records]
-
-
-def get_selected_ticket():
-    tid = st.session_state.get("selected_ticket_id")
-
-    if tid is None:
-        return None
-
-    try:
-        tid = int(tid)
-    except Exception:
-        return None
-
-    df = session.sql(f"""
-        SELECT *
-        FROM support_tickets
-        WHERE ticket_id = {tid}
-        LIMIT 1
-    """).to_pandas()
-
-    if df.empty:
-        return None
-
-    record = df.to_dict("records")[0]
-    return normalize_record_keys(record)
-
-
-def get_next_ticket_id():
-    result = session.sql("""
-        SELECT COALESCE(MAX(ticket_id), 0) + 1 AS NEXT_ID
-        FROM support_tickets
-    """).collect()
-
-    return int(result[0]["NEXT_ID"])
-
-
-def insert_ticket(ticket):
-    client_id = sql_escape(ticket["client_id"])
-    sentiment = sql_escape(ticket["sentiment"])
-    priority = sql_escape(ticket["priority"])
-    department = sql_escape(ticket["department"])
-    status = sql_escape(ticket["status"])
-    feedback_sql = "NULL" if ticket["feedback"] is None else f"'{sql_escape(ticket['feedback'])}'"
-
-    session.sql(f"""
-        INSERT INTO support_tickets (
-            ticket_id,
-            client_id,
-            ticket_text,
-            sentiment,
-            priority,
-            confidence,
-            department,
-            generated_response,
-            status,
-            feedback,
-            quality_score,
-            safe_to_send,
-            retry_count,
-            created_at
-        )
-        VALUES (
-            {ticket["ticket_id"]},
-            '{client_id}',
-            $$ {ticket["ticket_text"]} $$,
-            '{sentiment}',
-            '{priority}',
-            {ticket["confidence"]},
-            '{department}',
-            $$ {ticket["generated_response"]} $$,
-            '{status}',
-            {feedback_sql},
-            {ticket["quality_score"]},
-            {str(ticket["safe_to_send"]).upper()},
-            {ticket["retry_count"]},
-            CURRENT_TIMESTAMP()
-        )
-    """).collect()
-
-
-def insert_monitoring(ticket):
-    sentiment = sql_escape(ticket["sentiment"])
-    priority = sql_escape(ticket["priority"])
-    department = sql_escape(ticket["department"])
-    status = sql_escape(ticket["status"])
-
-    session.sql(f"""
-        INSERT INTO agent_monitoring (
-            ticket_id,
-            sentiment,
-            priority,
-            department,
-            quality_score,
-            safe_to_send,
-            retry_count,
-            final_status,
-            created_at
-        )
-        VALUES (
-            {ticket["ticket_id"]},
-            '{sentiment}',
-            '{priority}',
-            '{department}',
-            {ticket["quality_score"]},
-            {str(ticket["safe_to_send"]).upper()},
-            {ticket["retry_count"]},
-            '{status}',
-            CURRENT_TIMESTAMP()
-        )
-    """).collect()
-
-
-def update_ticket_status(ticket_id, status):
-    safe_status = sql_escape(status)
-
-    session.sql(f"""
-        UPDATE support_tickets
-        SET status = '{safe_status}'
-        WHERE ticket_id = {int(ticket_id)}
-    """).collect()
-
-
-def update_ticket_feedback(ticket_id, feedback):
-    safe_feedback = sql_escape(feedback)
-
-    session.sql(f"""
-        UPDATE support_tickets
-        SET feedback = '{safe_feedback}'
-        WHERE ticket_id = {int(ticket_id)}
-    """).collect()
-
 # =========================================================
 # HEADER
 # =========================================================
@@ -464,6 +80,16 @@ role = st.radio(
 )
 
 st.divider()
+
+# =========================================================
+# DEBUG PANEL
+# =========================================================
+if st.session_state.last_evaluation_debug is not None:
+    with st.expander("Debug - Last Evaluation Agent Output", expanded=True):
+        eval_debug = st.session_state.last_evaluation_debug
+        st.json(eval_debug)
+        st.info(f"Last evaluation action: {eval_debug.get('action', 'N/A')}")
+        st.caption(f"Reason: {eval_debug.get('reason', '')}")
 
 # =========================================================
 # DASHBOARD
@@ -543,11 +169,16 @@ with left:
 
         client_id = st.text_input("Client ID", placeholder="e.g. C12345")
         animate_pipeline = st.checkbox("Animate multi-agent pipeline", value=True)
+        show_debug = st.checkbox("Show evaluation debug", value=True)
 
         if st.button("Submit Ticket", use_container_width=True):
             if ticket_text.strip():
                 with st.spinner("Processing ticket..."):
-                    result = run_pipeline_simulation(ticket_text, animate=animate_pipeline)
+                    result = run_pipeline_simulation(
+                        ticket_text,
+                        animate=animate_pipeline,
+                        show_debug=show_debug
+                    )
 
                 ticket_id = get_next_ticket_id()
 
@@ -562,9 +193,9 @@ with left:
                     "generated_response": result["response"],
                     "status": result["status"],
                     "feedback": None,
-                    "quality_score": 0.95,
-                    "safe_to_send": True,
-                    "retry_count": 0
+                    "quality_score": result["quality_score"],
+                    "safe_to_send": result["safe_to_send"],
+                    "retry_count": result["retry_count"]
                 }
 
                 insert_ticket(ticket_data)
@@ -645,7 +276,7 @@ with left:
 # RIGHT PANEL
 # =========================================================
 with right:
-    ticket = get_selected_ticket()
+    ticket = get_selected_ticket(st.session_state.get("selected_ticket_id"))
 
     if not ticket:
         st.info("Select a ticket from the history to view details.")
@@ -687,7 +318,7 @@ with right:
         st.markdown("### Multi-Agent Pipeline")
         render_static_completed_pipeline()
         st.markdown(
-            '<div class="muted">This ticket went through the full agent workflow: Sentiment → Priority → Routing → RAG → Response.</div>',
+            '<div class="muted">This ticket went through the full agent workflow: Sentiment → Priority → Routing → RAG → Response → Evaluation.</div>',
             unsafe_allow_html=True
         )
 
@@ -747,6 +378,10 @@ with right:
         st.markdown("### Knowledge Context Used")
         st.caption("Context lines are used during generation but are not stored in support_tickets.")
 
+        if st.session_state.last_pipeline_result is not None:
+            with st.expander("Pipeline Debug Result", expanded=False):
+                st.json(st.session_state.last_pipeline_result)
+
         if role == "Customer":
             st.markdown("### Was this response helpful?")
             fb1, fb2 = st.columns(2)
@@ -791,4 +426,6 @@ with right:
             st.info(f"Customer feedback: {feedback_val}")
 
         with st.expander("Technical JSON Output"):
-            st.json(ticket)
+            technical_output = dict(ticket)
+            technical_output["correction"] = ticket.get("correction")
+            st.json(technical_output)
