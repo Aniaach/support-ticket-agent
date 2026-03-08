@@ -194,6 +194,52 @@ if role == "Support Agent":
             f"{round(stats['escalation_rate']*100,1)}%"
         )
 
+    dept_data = get_ticket_distribution_by_department()
+
+    if dept_data:
+    
+        st.subheader("Ticket Distribution by Department")
+    
+        dept_df = pd.DataFrame(dept_data)
+    
+        st.bar_chart(
+            dept_df.set_index("department")
+        )
+
+    sentiment_data = get_sentiment_distribution()
+
+    if sentiment_data:
+    
+        st.subheader("Customer Sentiment")
+    
+        sentiment_df = pd.DataFrame(sentiment_data)
+    
+        st.bar_chart(
+            sentiment_df.set_index("sentiment")
+        )
+
+    retry_data = get_retry_distribution()
+
+    if retry_data:
+    
+        st.subheader("AI Retry Distribution")
+    
+        retry_df = pd.DataFrame(retry_data)
+    
+        st.bar_chart(
+            retry_df.set_index("retry_count")
+        )
+
+    top_clients = get_top_clients()
+
+    if top_clients:
+    
+        st.subheader("Top Clients by Ticket Volume")
+    
+        client_df = pd.DataFrame(top_clients)
+    
+        st.dataframe(client_df)
+
 # =========================================================
 # MAIN LAYOUT
 # =========================================================
