@@ -9,7 +9,12 @@ from database import (
     insert_monitoring,
     update_ticket_status,
     update_ticket_feedback,
-    get_tickets_by_client
+    get_tickets_by_client,
+    get_ai_monitoring_stats,
+    get_ticket_distribution_by_department,
+    get_sentiment_distribution,
+    get_retry_distribution,
+    get_top_clients
 )
 from pipeline import run_pipeline_simulation, render_static_completed_pipeline
 
@@ -85,7 +90,7 @@ st.divider()
 # =========================================================
 # DEBUG PANEL
 # =========================================================
-if st.session_state.last_evaluation_debug is not None:
+if role == "Support Agent" and st.session_state.last_evaluation_debug is not None:
     with st.expander("Debug - Last Evaluation Agent Output", expanded=True):
         eval_debug = st.session_state.last_evaluation_debug
         st.json(eval_debug)
@@ -98,7 +103,10 @@ if st.session_state.last_evaluation_debug is not None:
 #tickets = get_all_tickets()
 if role == "Customer":
     client_id = st.session_state.get("client_id")
-    tickets = get_tickets_by_client(client_id)
+    if client_id:
+        tickets = get_tickets_by_client(client_id)
+    else:
+        tickets = []
 else:
     tickets = get_all_tickets()
 
@@ -155,6 +163,37 @@ with k5:
 
 st.divider()
 
+if role == "Support Agent":
+
+    st.divider()
+    st.subheader("AI Monitoring Dashboard")
+
+    stats = get_ai_monitoring_stats()
+
+    if stats:
+
+        m1, m2, m3, m4 = st.columns(4)
+
+        m1.metric(
+            "AI Runs",
+            stats["total_runs"]
+        )
+
+        m2.metric(
+            "Avg Quality Score",
+            round(stats["avg_quality"], 2)
+        )
+
+        m3.metric(
+            "Safe Responses",
+            f"{round(stats['safe_rate']*100,1)}%"
+        )
+
+        m4.metric(
+            "Escalation Rate",
+            f"{round(stats['escalation_rate']*100,1)}%"
+        )
+
 # =========================================================
 # MAIN LAYOUT
 # =========================================================
@@ -174,8 +213,16 @@ with left:
         # )
 
         # client_id = st.text_input("Client ID", placeholder="e.g. C12345")
-        client_id = st.text_input("Client ID", placeholder="Enter your client ID. e.g. C12345")
-        st.session_state.client_id = client_id
+        client_id_input = st.text_input("Client ID", placeholder="Enter your client ID. e.g. C1234")
+        #st.session_state.client_id = client_id
+        if st.button("Connect", use_container_width=True):
+            if client_id_input:
+                st.session_state.client_id = client_id_input
+                st.success(f"Connected as {client_id_input}")
+                st.rerun()
+        
+            else:
+                st.warning("Please enter your Client ID.")
         
         ticket_text = st.text_area(
             "Message",
@@ -187,40 +234,42 @@ with left:
         show_debug = st.checkbox("Show evaluation debug", value=True)
 
         if st.button("Submit Ticket", use_container_width=True):
-            if ticket_text.strip():
-                with st.spinner("Processing ticket..."):
-                    result = run_pipeline_simulation(
-                        ticket_text,
-                        animate=animate_pipeline,
-                        show_debug=show_debug
-                    )
-
-                ticket_id = get_next_ticket_id()
-
-                ticket_data = {
-                    "ticket_id": ticket_id,
-                    "client_id": client_id.strip(),
-                    "ticket_text": ticket_text.strip(),
-                    "sentiment": result["sentiment"],
-                    "priority": result["priority"],
-                    "confidence": result["confidence"],
-                    "department": result["department"],
-                    "generated_response": result["response"],
-                    "status": result["status"],
-                    "feedback": None,
-                    "quality_score": result["quality_score"],
-                    "safe_to_send": result["safe_to_send"],
-                    "retry_count": result["retry_count"]
-                }
-
-                insert_ticket(ticket_data)
-                insert_monitoring(ticket_data)
-
-                st.session_state.selected_ticket_id = ticket_id
-                st.success("Ticket created successfully.")
-                st.rerun()
-            else:
-                st.warning("Please enter a message before submitting.")
+            if not st.session_state.get("client_id"):
+                st.warning("Please connect with your Client ID before submitting a ticket.")
+                if ticket_text.strip():
+                    with st.spinner("Processing ticket..."):
+                        result = run_pipeline_simulation(
+                            ticket_text,
+                            animate=animate_pipeline,
+                            show_debug=show_debug
+                        )
+    
+                    ticket_id = get_next_ticket_id()
+    
+                    ticket_data = {
+                        "ticket_id": ticket_id,
+                        "client_id": client_id.strip(),
+                        "ticket_text": ticket_text.strip(),
+                        "sentiment": result["sentiment"],
+                        "priority": result["priority"],
+                        "confidence": result["confidence"],
+                        "department": result["department"],
+                        "generated_response": result["response"],
+                        "status": result["status"],
+                        "feedback": None,
+                        "quality_score": result["quality_score"],
+                        "safe_to_send": result["safe_to_send"],
+                        "retry_count": result["retry_count"]
+                    }
+    
+                    insert_ticket(ticket_data)
+                    insert_monitoring(ticket_data)
+    
+                    st.session_state.selected_ticket_id = ticket_id
+                    st.success("Ticket created successfully.")
+                    st.rerun()
+                else:
+                    st.warning("Please enter a message before submitting.")
 
     else:
         st.subheader("Support Controls")
@@ -238,20 +287,22 @@ with left:
         search_term = st.text_input("Search by keyword / client ID")
 
     st.divider()
+    if role == "Customer" and not st.session_state.get("client_id"):
+        st.info("Enter your Client ID to see your tickets.")
     st.subheader("Ticket History")
 
     filtered_tickets = []
 
     if role == "Customer":
         customer_search = st.text_input("Search my tickets")
-        customer_client_filter = st.text_input("Filter by my Client ID")
+        #customer_client_filter = st.text_input("Filter by my Client ID")
 
         for t in tickets:
             if customer_search and customer_search.lower() not in str(t.get("ticket_text", "")).lower():
                 continue
 
-            if customer_client_filter and customer_client_filter.lower() not in str(t.get("client_id", "")).lower():
-                continue
+            # if customer_client_filter and customer_client_filter.lower() not in str(t.get("client_id", "")).lower():
+            #     continue
 
             filtered_tickets.append(t)
 
@@ -341,43 +392,43 @@ with right:
             st.markdown("### Analysis")
             c1, c2, c3, c4 = st.columns(4)
 
-        with c1:
-            st.markdown(f"""
-            <div class="kpi">
-              <div class="label">SENTIMENT</div>
-              <div class="value">{ticket.get("sentiment","N/A")}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with c2:
-            st.markdown(f"""
-            <div class="kpi">
-              <div class="label">PRIORITY</div>
-              <div class="value">{ticket.get("priority","N/A")}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with c3:
-            conf = ticket.get("confidence", 0.0)
-            try:
-                conf = round(float(conf), 2)
-            except Exception:
-                conf = 0.0
-
-            st.markdown(f"""
-            <div class="kpi">
-              <div class="label">CONFIDENCE</div>
-              <div class="value">{conf}</div>
-            </div>
-            """, unsafe_allow_html=True)
-
-        with c4:
-            st.markdown(f"""
-            <div class="kpi">
-              <div class="label">DEPARTMENT</div>
-              <div class="value">{ticket.get("department","N/A")}</div>
-            </div>
-            """, unsafe_allow_html=True)
+            with c1:
+                st.markdown(f"""
+                <div class="kpi">
+                  <div class="label">SENTIMENT</div>
+                  <div class="value">{ticket.get("sentiment","N/A")}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+            with c2:
+                st.markdown(f"""
+                <div class="kpi">
+                  <div class="label">PRIORITY</div>
+                  <div class="value">{ticket.get("priority","N/A")}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+            with c3:
+                conf = ticket.get("confidence", 0.0)
+                try:
+                    conf = round(float(conf), 2)
+                except Exception:
+                    conf = 0.0
+    
+                st.markdown(f"""
+                <div class="kpi">
+                  <div class="label">CONFIDENCE</div>
+                  <div class="value">{conf}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    
+            with c4:
+                st.markdown(f"""
+                <div class="kpi">
+                  <div class="label">DEPARTMENT</div>
+                  <div class="value">{ticket.get("department","N/A")}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
         st.markdown("### Original Message")
         st.markdown(

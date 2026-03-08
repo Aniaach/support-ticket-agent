@@ -156,7 +156,6 @@ def update_ticket_feedback(ticket_id, feedback):
 
 
 def get_tickets_by_client(client_id):
-
     if not client_id:
         return []
 
@@ -174,3 +173,92 @@ def get_tickets_by_client(client_id):
 
     records = df.to_dict("records")
     return [normalize_record_keys(r) for r in records]
+
+
+####################################
+#      Monitoring functions        #
+####################################
+
+def get_ai_monitoring_stats():
+
+    df = session.sql("""
+        SELECT
+            COUNT(*) as total_runs,
+            AVG(quality_score) as avg_quality,
+            AVG(retry_count) as avg_retry,
+            AVG(CASE WHEN safe_to_send THEN 1 ELSE 0 END) as safe_rate,
+            AVG(CASE WHEN final_status = 'Escalated' THEN 1 ELSE 0 END) as escalation_rate
+        FROM agent_monitoring
+    """).to_pandas()
+    
+    if df.empty:
+        return None
+    
+    return normalize_record_keys(df.to_dict("records")[0])
+
+
+def get_ticket_distribution_by_department():
+
+    df = session.sql("""
+        SELECT
+            department,
+            COUNT(*) as tickets
+        FROM support_tickets
+        GROUP BY department
+        ORDER BY tickets DESC
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    return [normalize_record_keys(r) for r in df.to_dict("records")]
+
+def get_sentiment_distribution():
+
+    df = session.sql("""
+        SELECT
+            sentiment,
+            COUNT(*) as tickets
+        FROM support_tickets
+        GROUP BY sentiment
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    return [normalize_record_keys(r) for r in df.to_dict("records")]
+
+
+def get_retry_distribution():
+
+    df = session.sql("""
+        SELECT
+            retry_count,
+            COUNT(*) as tickets
+        FROM agent_monitoring
+        GROUP BY retry_count
+        ORDER BY retry_count
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    return [normalize_record_keys(r) for r in df.to_dict("records")]
+
+
+def get_top_clients():
+
+    df = session.sql("""
+        SELECT
+            client_id,
+            COUNT(*) as tickets
+        FROM support_tickets
+        GROUP BY client_id
+        ORDER BY tickets DESC
+        LIMIT 10
+    """).to_pandas()
+
+    if df.empty:
+        return []
+
+    return [normalize_record_keys(r) for r in df.to_dict("records")]
