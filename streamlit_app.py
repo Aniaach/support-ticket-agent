@@ -299,9 +299,9 @@ with tickets_container:
                 if client_id_input:
                     st.session_state.client_id = client_id_input
                     st.success(f"Connected as {client_id_input}")
-                    if st.button("Disconnect"):
-                        st.session_state.client_id = None
-                        st.rerun()
+                    # if st.button("Disconnect"):
+                    #     st.session_state.client_id = None
+                    #     st.rerun()
                     st.rerun()
             
                 else:
@@ -317,9 +317,16 @@ with tickets_container:
             show_debug = role == "Support Agent"
     
             if st.button("Submit Ticket", use_container_width=True):
+                #if not st.session_state.get("client_id"):
+                    # st.warning("Please connect with your Client ID before submitting a ticket.")
+                    # if ticket_text.strip():
                 if not st.session_state.get("client_id"):
                     st.warning("Please connect with your Client ID before submitting a ticket.")
-                    if ticket_text.strip():
+                
+                elif not ticket_text.strip():
+                    st.warning("Please enter a message before submitting.")
+                
+                else:
                         with st.spinner("Processing ticket..."):
                             result = run_pipeline_simulation(
                                 ticket_text,
@@ -331,7 +338,7 @@ with tickets_container:
         
                         ticket_data = {
                             "ticket_id": ticket_id,
-                            "client_id": client_id.strip(),
+                            "client_id": st.session_state.get("client_id"),
                             "ticket_text": ticket_text.strip(),
                             "sentiment": result["sentiment"],
                             "priority": result["priority"],
@@ -351,8 +358,8 @@ with tickets_container:
                         st.session_state.selected_ticket_id = ticket_id
                         st.success("Ticket created successfully.")
                         st.rerun()
-                    else:
-                        st.warning("Please enter a message before submitting.")
+            else:
+                st.warning("Please enter a message before submitting.")
     
         else:
             st.subheader("Support Controls")
