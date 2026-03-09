@@ -101,6 +101,20 @@ CUSTOM_CSS = """
 .pill.high { background:#FEE2E2; color:#B91C1C; }
 .pill.critical { background:#E9D5FF; color:#6B21A8; }
 
+.priority-high {
+    background:#FEE2E2;
+    color:#991B1B;
+}
+
+.priority-medium {
+    background:#FEF3C7;
+    color:#92400E;
+}
+
+.priority-low {
+    background:#DCFCE7;
+    color:#166534;
+}
 /* Agent log */
 .agent-log {
     border:1px dashed #D1D5DB;
@@ -130,6 +144,7 @@ CUSTOM_CSS = """
     border-radius:12px;
     padding:12px;
 }
+
 </style>
 """
 

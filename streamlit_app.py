@@ -72,12 +72,24 @@ def priority_icon(priority):
     if p in ["medium", "moderate"]:
         return "🟡"
     return "🟢"
+def priority_badge(priority):
+
+    p = priority.lower()
+
+    if p == "high":
+        cls = "priority-high"
+    elif p == "medium":
+        cls = "priority-medium"
+    else:
+        cls = "priority-low"
+
+    return f'<span class="badge {cls}">{priority}</span>'
 
 # =========================================================
 # HEADER
 # =========================================================
-st.title("🤖 AI Multi-Agent Support System")
-st.caption("Customer support workflow with simulated multi-agent pipeline")
+st.title("AI Multi-Agent Support System")
+#st.caption("Customer support workflow with simulated multi-agent pipeline")
 
 role = st.radio(
     "Workspace Mode",
@@ -189,10 +201,10 @@ if role == "Support Agent":
         
             if stats:
         
-                m1, m2, m3, m4 = st.columns(4)
+                m1, m2, m3, m4= st.columns(4)
         
                 m1.metric(
-                    "AI Runs",
+                    "Total Runs",
                     stats["total_runs"]
                 )
         
@@ -210,6 +222,7 @@ if role == "Support Agent":
                     "Escalation Rate",
                     f"{round(stats['escalation_rate']*100,1)}%"
                 )
+                
     if analytics_container:
         with analytics_container:
     
@@ -286,6 +299,9 @@ with tickets_container:
                 if client_id_input:
                     st.session_state.client_id = client_id_input
                     st.success(f"Connected as {client_id_input}")
+                    if st.button("Disconnect"):
+                        st.session_state.client_id = None
+                        st.rerun()
                     st.rerun()
             
                 else:
@@ -298,7 +314,7 @@ with tickets_container:
             )
             
             animate_pipeline = st.checkbox("Animate multi-agent pipeline", value=True)
-            show_debug = st.checkbox("Show evaluation debug", value=True)
+            show_debug = role == "Support Agent"
     
             if st.button("Submit Ticket", use_container_width=True):
                 if not st.session_state.get("client_id"):
@@ -388,20 +404,45 @@ with tickets_container:
     
                 filtered_tickets.append(t)
     
+        # if not filtered_tickets:
+        #     st.caption("No matching tickets.")
+        # else:
+        #     for t in filtered_tickets:
+        #         tid = t.get("ticket_id", "?")
+        #         prio = t.get("priority", "N/A")
+        #         status = t.get("status", "N/A")
+        #         ts = str(t.get("created_at", ""))[:16]
+        #         icon = priority_icon(prio)
+    
+        #         label = f"#{tid} {icon} {prio} • {status}"
+        #         if ts and ts != "None":
+        #             label += f" • {ts}"
+    
+        #         if st.button(label, key=f"hist_{tid}", use_container_width=True):
+        #             st.session_state.selected_ticket_id = tid
         if not filtered_tickets:
             st.caption("No matching tickets.")
         else:
+        
+            st.markdown('<div class="ticket-list">', unsafe_allow_html=True)
+
             for t in filtered_tickets:
+            
                 tid = t.get("ticket_id", "?")
                 prio = t.get("priority", "N/A")
                 status = t.get("status", "N/A")
+                dept = t.get("department", "N/A")
                 ts = str(t.get("created_at", ""))[:16]
+                text = str(t.get("ticket_text", "") or "")
+                
+                preview = text[:60].strip()
+                if len(text) > 60:
+                    preview += "..."
+                
                 icon = priority_icon(prio)
-    
-                label = f"#{tid} {icon} {prio} • {status}"
-                if ts and ts != "None":
-                    label += f" • {ts}"
-    
+               
+                label= f"#{tid} {icon} {prio} • {status} • {dept} • {ts} — {preview}"
+                
                 if st.button(label, key=f"hist_{tid}", use_container_width=True):
                     st.session_state.selected_ticket_id = tid
     
@@ -426,6 +467,7 @@ with tickets_container:
                 st.markdown(
                     f'<span class="badge {badge_class}">{status}</span>'
                     f'<span class="pill {prio_class}">{ticket.get("priority","N/A")}</span>',
+                    #f'{priority_badge(ticket.get("priority"))}',
                     unsafe_allow_html=True
                 )
     
@@ -509,8 +551,8 @@ with tickets_container:
                 unsafe_allow_html=True
             )
     
-            st.markdown("### Knowledge Context Used")
-            st.caption("Context lines are used during generation but are not stored in support_tickets.")
+            # st.markdown("### Knowledge Context Used")
+            # st.caption("Context lines are used during generation but are not stored in support_tickets.")
     
             if st.session_state.last_pipeline_result is not None:
                 with st.expander("Pipeline Debug Result", expanded=False):
